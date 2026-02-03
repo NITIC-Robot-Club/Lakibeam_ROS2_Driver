@@ -1,10 +1,13 @@
 #include <rclcpp/rclcpp.hpp> 
 #include <sensor_msgs/msg/laser_scan.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <sched.h>
+#include <thread>
+#include <atomic>
 
 #include <sys/select.h>
 #include <unistd.h>
@@ -22,10 +25,14 @@
 
 #define DEG2RAD(x) ((x)*M_PI / 180.f)
 using namespace std;
+
+namespace lakibeam1
+{
 class lakibeam1_scan : public rclcpp::Node
 {
 public:
-	lakibeam1_scan():Node("laser_scan_publisher")
+	explicit lakibeam1_scan(const rclcpp::NodeOptions & options)
+		: Node("laser_scan_publisher", options), running_(true)
 	{
 		declare_parameters();
 		get_parameters();
@@ -33,7 +40,22 @@ public:
 		info();
 		// scan_config();
 		create_socket();
-		scan_publish();
+		
+		// 別スレッドでスキャンデータの受信と配信を開始
+		scan_thread_ = std::thread(&lakibeam1_scan::scan_publish, this);
+	}
+
+	~lakibeam1_scan()
+	{
+		running_ = false;
+		if (scan_thread_.joinable())
+		{
+			scan_thread_.join();
+		}
+		if (sockfd >= 0)
+		{
+			close(sockfd);
+		}
 	}
 protected:
 	void get_parameters()
@@ -122,7 +144,7 @@ protected:
 		RCLCPP_INFO(get_logger(),"scan_publish");
 		// rclcpp::sleep_for(std::chrono::milliseconds(2000));
 		// get_telemetry_data(sensorip);
-		while (rclcpp::ok())
+		while (rclcpp::ok() && running_)
 		{
 			if(scan_vec_ready == 0)
 			{
@@ -231,7 +253,6 @@ protected:
 				scan_vec_ready = 0;
 			}
 		}
-		close(sockfd);
 	}
 
 private:
@@ -245,15 +266,12 @@ private:
 	int sockfd;
 	unsigned int last_timestamp_;
     std::vector <bm_response_scan_t> scan_vec;
+	std::thread scan_thread_;
+	std::atomic<bool> running_;
 };
 
-int main(int argc, char **argv)
-{
-	rclcpp::init(argc, argv);
-	rclcpp::Rate rate(30); 
-	auto node = make_shared<lakibeam1_scan>();
-	rclcpp::spin(node);
-	rclcpp::shutdown();	
 
-	return 0;
 }
+
+#include <rclcpp_components/register_node_macro.hpp>
+RCLCPP_COMPONENTS_REGISTER_NODE(lakibeam1::lakibeam1_scan)
