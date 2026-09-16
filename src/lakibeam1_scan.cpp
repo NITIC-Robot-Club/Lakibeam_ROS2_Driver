@@ -140,7 +140,7 @@ protected:
     };
 	void scan_publish()
 	{
-		double inf = std::numeric_limits<double>::infinity();
+		const float inf = std::numeric_limits<float>::infinity();
 		RCLCPP_INFO(get_logger(),"scan_publish");
 		// rclcpp::sleep_for(std::chrono::milliseconds(2000));
 		// get_telemetry_data(sensorip);
@@ -207,43 +207,55 @@ protected:
 			if(scan_vec_ready == 1)
 			{
 				sensor_msgs::msg::LaserScan scan;
-				uint16_t num_readings;
-				float duration = (scan_begin - scan_end).seconds();
+				const size_t num_readings = scan_vec.size();
+				const double duration = (scan_begin - scan_end).seconds();
+				if (num_readings == 0 || duration <= 0.0f)
+				{
+					scan_vec.clear();
+					scan_vec_ready = 0;
+					continue;
+				}
 
-				num_readings = scan_vec.size();
-				scan.header.stamp = scan_begin;
+				// scan_end is the receive time of the azimuth-zero packet that
+				// started the scan stored in scan_vec.  LaserScan requires the
+				// acquisition time of ranges[0], not the publication/end time.
+				scan.header.stamp = scan_end;
 				scan.header.frame_id = frame_id;
-				scan.angle_min = DEG2RAD(-180 + angle_offset);
-				scan.angle_max = DEG2RAD(180 + angle_offset);
-				scan.angle_increment = 2.0 * M_PI / num_readings;
-				scan.scan_time = duration;
-				scan.time_increment = duration/(float)num_readings/2;
+				const float positive_angle_increment = static_cast<float>(
+					2.0 * M_PI / static_cast<double>(num_readings));
+				const float acquisition_angle_min = static_cast<float>(DEG2RAD(-180 + angle_offset));
+				if (inverted)
+				{
+					// Preserve acquisition order so header.stamp + i*time_increment
+					// remains the timestamp of ranges[i].  Reverse the angle axis
+					// instead of reversing the sample array.
+					scan.angle_increment = -positive_angle_increment;
+					scan.angle_min = acquisition_angle_min +
+						static_cast<float>(num_readings - 1) * positive_angle_increment;
+				}
+				else
+				{
+					scan.angle_increment = positive_angle_increment;
+					scan.angle_min = acquisition_angle_min;
+				}
+				scan.angle_max = scan.angle_min +
+					static_cast<float>(num_readings - 1) * scan.angle_increment;
+				scan.scan_time = static_cast<float>(duration);
+				scan.time_increment = static_cast<float>(
+					duration / static_cast<double>(num_readings));
 				scan.range_min = 0.0;
 				scan.range_max = 100.0;
 				scan.ranges.resize(num_readings);
 				scan.intensities.resize(num_readings);
 
-				for(int i = 0;i < num_readings; i++)
+				for(size_t point_index = 0; point_index < num_readings; point_index++)
 				{
-					if (!inverted)
+					scan.ranges[point_index] = static_cast<float>(scan_vec[point_index].dist) / 1000.0f;
+					scan.intensities[point_index] = scan_vec[point_index].rssi;
+					if(scan.ranges[point_index] == 0)
 					{
-						scan.ranges[i] = (float)scan_vec[i].dist / 1000;
-						scan.intensities[i] = scan_vec[i].rssi;
-						if(scan.ranges[i] == 0)
-						{
-							scan.ranges[i] = inf;
-							scan.intensities[i] = 0;
-						}
-					}
-					else
-					{
-						scan.ranges[num_readings - i - 1] = (float)scan_vec[i].dist / 1000;
-						scan.intensities[num_readings - i - 1] = scan_vec[i].rssi;
-						if(scan.ranges[num_readings - i - 1] == 0)
-						{
-							scan.ranges[num_readings - i - 1] = inf;
-							scan.intensities[num_readings - i - 1] = 0;
-						}
+						scan.ranges[point_index] = inf;
+						scan.intensities[point_index] = 0;
 					}
 				}
 
