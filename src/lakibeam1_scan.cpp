@@ -216,10 +216,11 @@ protected:
 					continue;
 				}
 
-				// scan_end is the receive time of the azimuth-zero packet that
-				// started the scan stored in scan_vec.  LaserScan requires the
-				// acquisition time of ranges[0], not the publication/end time.
-				scan.header.stamp = scan_begin; // wtf
+				// scan_vec contains samples acquired after the previous azimuth-zero
+				// packet and is completed when the next azimuth-zero packet arrives.
+				// LaserScan.header.stamp is the acquisition time of ranges[0], so use
+				// that previous boundary rather than the current scan-end boundary.
+				scan.header.stamp = scan_end;
 				scan.header.frame_id = frame_id;
 				const float positive_angle_increment = static_cast<float>(
 					2.0 * M_PI / static_cast<double>(num_readings));
